@@ -44,7 +44,7 @@ def get_fred(series, limit=None):
         return {"dates": [], "values": []}
 
 
-euribor   = get_fred("EUR3MTD156N")
+euribor   = get_fred("IR3TIB01EZM156N")
 inflation = get_fred("CP0000EZ19M086NEST")
 bce       = get_fred("ECBDFR", limit=365)
 oat       = get_fred("IRLTLT01FRM156N")
