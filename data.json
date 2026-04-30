@@ -1,0 +1,7 @@
+{
+  "euribor":{"dates":[],"values":[]},
+  "inflation":{"dates":[],"values":[]},
+  "bce":{"dates":[],"values":[]},
+  "oat":{"dates":[],"values":[]},
+  "last_update":"init"
+}
