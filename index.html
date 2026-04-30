@@ -1,79 +1,565 @@
-import requests, json
-from datetime import datetime
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard CAT EPS — Taux & Marchés</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0d0f14;
+    --surface: #14161d;
+    --surface2: #1c1f28;
+    --border: #252935;
+    --text: #e8eaf0;
+    --muted: #6b7280;
+    --accent: #4f8ef7;
+    --green: #34d399;
+    --red: #f87171;
+    --yellow: #fbbf24;
 
-API_KEY = "9713ae41b71f0db52bfc7eb9035ef0ce"
+    --euribor: #4f8ef7;
+    --inflation: #a78bfa;
+    --bce: #34d399;
+    --oat: #fbbf24;
+  }
 
-# Séries FRED utilisées :
-# EURIBOR3MD156N  → Euribor 3 mois (taux en %)
-# CP0000EZ19M086NEST → Inflation zone euro HICP (indice base 100 = 2015)
-# ECBDFR          → Taux directeur BCE Deposit Facility Rate
-# IRLTLT01FRM156N → OAT France 10 ans
+  * { box-sizing: border-box; margin: 0; padding: 0; }
 
-def get_fred(series, limit=None):
-    """
-    Récupère les observations d'une série FRED.
-    limit : nombre de derniers points à conserver (None = tout)
-    """
-    url = (
-        f"https://api.stlouisfed.org/fred/series/observations"
-        f"?series_id={series}&api_key={API_KEY}&file_type=json"
-    )
-    try:
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
-        data = response.json()
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 0 0 60px 0;
+  }
 
-        if "observations" not in data:
-            print(f"[ERREUR] API FRED pour {series} :", data.get("error_message", data))
-            return {"dates": [], "values": []}
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 28px 40px 20px;
+    border-bottom: 1px solid var(--border);
+  }
 
-        obs = data["observations"]
-        if limit:
-            obs = obs[-limit:]
+  .header-left h1 {
+    font-family: 'Syne', sans-serif;
+    font-size: 1.5rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
 
-        dates, values = [], []
-        for x in obs:
-            dates.append(x["date"])
-            v = x["value"]
-            if v in (".", "", None):
-                values.append(None)
-            else:
-                try:
-                    values.append(float(v))
-                except (ValueError, TypeError):
-                    values.append(None)
+  .header-left p {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-top: 3px;
+    font-family: 'DM Mono', monospace;
+  }
 
-        print(f"[OK] {series} — {len(dates)} points, dernier : {dates[-1] if dates else '—'}")
-        return {"dates": dates, "values": values}
+  .update-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
 
-    except requests.RequestException as e:
-        print(f"[ERREUR RÉSEAU] {series} :", e)
-        return {"dates": [], "values": []}
-    except Exception as e:
-        print(f"[ERREUR] {series} :", e)
-        return {"dates": [], "values": []}
+  .update-dot {
+    width: 7px; height: 7px;
+    background: var(--green);
+    border-radius: 50%;
+    box-shadow: 0 0 6px var(--green);
+    animation: pulse 2s infinite;
+  }
 
+  @keyframes pulse {
+    0%,100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
 
-# Récupération de toutes les séries
-# On garde jusqu'à 30 ans de données pour permettre des vues historiques longues
-euribor   = get_fred("EURIBOR3MD156N")      # mensuel → ~360 points sur 30 ans
-inflation = get_fred("CP0000EZ19M086NEST")  # mensuel
-bce       = get_fred("ECBDFR")              # quotidien → limité à 365 jours
-oat       = get_fred("IRLTLT01FRM156N")     # mensuel
+  /* ── KPI row ── */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    margin: 0;
+    border-bottom: 1px solid var(--border);
+  }
 
-# Pour la BCE (données quotidiennes), on garde les 365 derniers jours seulement
-# car afficher 30 ans de données quotidiennes serait trop lourd
-bce_daily = get_fred("ECBDFR", limit=365)
+  .kpi {
+    background: var(--surface);
+    padding: 22px 30px;
+    position: relative;
+    overflow: hidden;
+    cursor: default;
+    transition: background 0.2s;
+  }
 
-data = {
-    "euribor":    euribor,
-    "inflation":  inflation,
-    "bce":        bce_daily,
-    "oat":        oat,
-    "last_update": datetime.now().strftime("%Y-%m-%d %H:%M")
+  .kpi::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+
+  .kpi.euribor::before { background: var(--euribor); }
+  .kpi.inflation::before { background: var(--inflation); }
+  .kpi.bce::before { background: var(--bce); }
+  .kpi.oat::before { background: var(--oat); }
+
+  .kpi:hover { background: var(--surface2); }
+
+  .kpi-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    margin-bottom: 8px;
+    font-family: 'DM Mono', monospace;
+  }
+
+  .kpi-value {
+    font-family: 'Syne', sans-serif;
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1;
+  }
+
+  .kpi.euribor .kpi-value { color: var(--euribor); }
+  .kpi.inflation .kpi-value { color: var(--inflation); }
+  .kpi.bce .kpi-value { color: var(--bce); }
+  .kpi.oat .kpi-value { color: var(--oat); }
+
+  .kpi-sub {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    font-size: 0.76rem;
+    color: var(--muted);
+  }
+
+  .delta {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+
+  .delta.up { background: rgba(248,113,113,0.15); color: var(--red); }
+  .delta.down { background: rgba(52,211,153,0.15); color: var(--green); }
+  .delta.flat { background: rgba(107,114,128,0.15); color: var(--muted); }
+
+  /* ── Period selector ── */
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 18px 40px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .controls span {
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-family: 'DM Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-right: 4px;
+  }
+
+  .period-btn {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 5px 14px;
+    border-radius: 6px;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.04em;
+  }
+
+  .period-btn:hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+
+  .period-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+
+  /* ── Charts grid ── */
+  .charts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    margin: 0;
+  }
+
+  .chart-card {
+    background: var(--surface);
+    padding: 28px 30px 24px;
+  }
+
+  .chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 20px;
+  }
+
+  .chart-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .chart-desc {
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin-top: 3px;
+  }
+
+  .chart-latest {
+    font-family: 'DM Mono', monospace;
+    font-size: 1.1rem;
+    font-weight: 500;
+    text-align: right;
+  }
+
+  .chart-canvas-wrap {
+    position: relative;
+    height: 200px;
+  }
+
+  /* ── Footer note ── */
+  .footnote {
+    padding: 20px 40px 0;
+    font-size: 0.71rem;
+    color: var(--muted);
+    font-family: 'DM Mono', monospace;
+    border-top: 1px solid var(--border);
+    margin-top: 1px;
+  }
+
+  @media (max-width: 768px) {
+    header { padding: 18px 18px 14px; flex-direction: column; align-items: flex-start; gap: 10px; }
+    .kpi-row { grid-template-columns: 1fr 1fr; }
+    .charts-grid { grid-template-columns: 1fr; }
+    .controls { padding: 12px 18px; flex-wrap: wrap; }
+    .chart-card { padding: 18px; }
+    .kpi { padding: 18px; }
+    .footnote { padding: 16px 18px 0; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <h1>Dashboard CAT — Évolution des Taux</h1>
+    <p id="last-update">Chargement…</p>
+  </div>
+  <div class="update-badge">
+    <div class="update-dot"></div>
+    <span>Données FRED · Mise à jour quotidienne</span>
+  </div>
+</header>
+
+<div class="kpi-row">
+  <div class="kpi euribor">
+    <div class="kpi-label">Euribor 3M</div>
+    <div class="kpi-value" id="kpi-euribor">—</div>
+    <div class="kpi-sub">
+      <span class="delta flat" id="delta-euribor">—</span>
+      <span id="sub-euribor">vs mois précédent</span>
+    </div>
+  </div>
+  <div class="kpi inflation">
+    <div class="kpi-label">Inflation Zone Euro (HICP)</div>
+    <div class="kpi-value" id="kpi-inflation">—</div>
+    <div class="kpi-sub">
+      <span class="delta flat" id="delta-inflation">—</span>
+      <span id="sub-inflation">vs mois précédent</span>
+    </div>
+  </div>
+  <div class="kpi bce">
+    <div class="kpi-label">Taux BCE (DFR)</div>
+    <div class="kpi-value" id="kpi-bce">—</div>
+    <div class="kpi-sub">
+      <span class="delta flat" id="delta-bce">—</span>
+      <span id="sub-bce">vs mois précédent</span>
+    </div>
+  </div>
+  <div class="kpi oat">
+    <div class="kpi-label">OAT France 10 ans</div>
+    <div class="kpi-value" id="kpi-oat">—</div>
+    <div class="kpi-sub">
+      <span class="delta flat" id="delta-oat">—</span>
+      <span id="sub-oat">vs mois précédent</span>
+    </div>
+  </div>
+</div>
+
+<div class="controls">
+  <span>Période :</span>
+  <button class="period-btn" data-months="12">1 an</button>
+  <button class="period-btn" data-months="36">3 ans</button>
+  <button class="period-btn active" data-months="60">5 ans</button>
+  <button class="period-btn" data-months="120">10 ans</button>
+  <button class="period-btn" data-months="0">Tout</button>
+</div>
+
+<div class="charts-grid">
+  <div class="chart-card">
+    <div class="chart-header">
+      <div>
+        <div class="chart-title">Euribor 3 Mois</div>
+        <div class="chart-desc">Taux interbancaire zone euro · FRED EURIBOR3MD156N</div>
+      </div>
+      <div class="chart-latest euribor" id="cl-euribor" style="color:var(--euribor)">—</div>
+    </div>
+    <div class="chart-canvas-wrap"><canvas id="chart-euribor"></canvas></div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-header">
+      <div>
+        <div class="chart-title">Inflation Zone Euro</div>
+        <div class="chart-desc">Indice des prix à la consommation HICP · Base 100 = 2015</div>
+      </div>
+      <div class="chart-latest" id="cl-inflation" style="color:var(--inflation)">—</div>
+    </div>
+    <div class="chart-canvas-wrap"><canvas id="chart-inflation"></canvas></div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-header">
+      <div>
+        <div class="chart-title">Taux Directeur BCE</div>
+        <div class="chart-desc">Deposit Facility Rate · FRED ECBDFR</div>
+      </div>
+      <div class="chart-latest" id="cl-bce" style="color:var(--bce)">—</div>
+    </div>
+    <div class="chart-canvas-wrap"><canvas id="chart-bce"></canvas></div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-header">
+      <div>
+        <div class="chart-title">OAT France 10 ans</div>
+        <div class="chart-desc">Taux obligataire souverain · FRED IRLTLT01FRM156N</div>
+      </div>
+      <div class="chart-latest" id="cl-oat" style="color:var(--oat)">—</div>
+    </div>
+    <div class="chart-canvas-wrap"><canvas id="chart-oat"></canvas></div>
+  </div>
+</div>
+
+<p class="footnote">Source : Federal Reserve Bank of St. Louis (FRED) · Fréquences variables selon les séries · Les données d'inflation sont en indice HICP base 100 = 2015</p>
+
+<script>
+const COLORS = {
+  euribor: '#4f8ef7',
+  inflation: '#a78bfa',
+  bce: '#34d399',
+  oat: '#fbbf24'
+};
+
+let rawData = null;
+let charts = {};
+let currentMonths = 60;
+
+// ── Helpers ──
+function lastValid(arr) {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (arr[i] !== null && arr[i] !== undefined) return arr[i];
+  }
+  return null;
 }
 
-with open("data.json", "w") as f:
-    json.dump(data, f, separators=(',', ':'))
+function prevValid(arr, count = 1) {
+  let found = 0;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (arr[i] !== null && arr[i] !== undefined) {
+      found++;
+      if (found > count) return arr[i];
+    }
+  }
+  return null;
+}
 
-print(f"\n✅ data.json mis à jour — {data['last_update']}")
+function formatVal(v, isIndex = false) {
+  if (v === null || v === undefined) return '—';
+  if (isIndex) return v.toFixed(1);
+  return v.toFixed(2) + ' %';
+}
+
+function setKPI(id, series, isIndex = false) {
+  const vals = rawData[series].values;
+  const last = lastValid(vals);
+  const prev = prevValid(vals, 1);
+  const diff = (last !== null && prev !== null) ? last - prev : null;
+
+  document.getElementById(`kpi-${id}`).textContent = formatVal(last, isIndex);
+  document.getElementById(`cl-${id}`).textContent = formatVal(last, isIndex);
+
+  const deltaEl = document.getElementById(`delta-${id}`);
+  if (diff !== null) {
+    const sign = diff > 0.005 ? 'up' : diff < -0.005 ? 'down' : 'flat';
+    deltaEl.className = `delta ${sign}`;
+    deltaEl.textContent = (diff >= 0 ? '+' : '') + diff.toFixed(isIndex ? 2 : 2) + (isIndex ? ' pts' : ' pp');
+  }
+}
+
+function sliceData(series, months) {
+  const { dates, values } = rawData[series];
+  if (!months) return { dates, values };
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - months);
+  const idx = dates.findIndex(d => new Date(d) >= cutoff);
+  if (idx === -1) return { dates, values };
+  return { dates: dates.slice(idx), values: values.slice(idx) };
+}
+
+function buildChart(id, series, color, isIndex = false) {
+  const { dates, values } = sliceData(series, currentMonths);
+  const ctx = document.getElementById(`chart-${id}`);
+  const unit = isIndex ? '' : ' %';
+
+  charts[id] = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: dates,
+      datasets: [{
+        data: values,
+        borderColor: color,
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        pointHoverBackgroundColor: color,
+        fill: true,
+        backgroundColor: (ctx) => {
+          const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, 200);
+          g.addColorStop(0, color + '22');
+          g.addColorStop(1, color + '00');
+          return g;
+        },
+        tension: 0.3,
+        spanGaps: true
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1c1f28',
+          borderColor: '#252935',
+          borderWidth: 1,
+          titleColor: '#6b7280',
+          bodyColor: '#e8eaf0',
+          titleFont: { family: 'DM Mono', size: 11 },
+          bodyFont: { family: 'DM Mono', size: 12 },
+          padding: 10,
+          callbacks: {
+            title: (items) => items[0].label,
+            label: (item) => {
+              const v = item.raw;
+              if (v === null) return ' N/A';
+              return ' ' + v.toFixed(2) + unit;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: {
+            color: '#6b7280',
+            font: { family: 'DM Mono', size: 10 },
+            maxTicksLimit: 6,
+            maxRotation: 0,
+            callback: function(val, idx) {
+              const d = this.getLabelForValue(val);
+              return d ? d.slice(0, 7) : '';
+            }
+          },
+          grid: { color: '#1c1f28' },
+          border: { color: '#252935' }
+        },
+        y: {
+          ticks: {
+            color: '#6b7280',
+            font: { family: 'DM Mono', size: 10 },
+            callback: v => v.toFixed(1) + unit
+          },
+          grid: { color: '#1c1f2888' },
+          border: { color: '#252935', dash: [3, 3] }
+        }
+      }
+    }
+  });
+}
+
+function updateCharts() {
+  ['euribor', 'inflation', 'bce', 'oat'].forEach((s, i) => {
+    const isIndex = s === 'inflation';
+    const keys = ['euribor', 'inflation', 'bce', 'oat'];
+    const seriesKey = keys[i];
+    const { dates, values } = sliceData(seriesKey, currentMonths);
+    charts[s].data.labels = dates;
+    charts[s].data.datasets[0].data = values;
+    charts[s].update('none');
+  });
+}
+
+// ── Period buttons ──
+document.querySelectorAll('.period-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentMonths = parseInt(btn.dataset.months) || 0;
+    updateCharts();
+  });
+});
+
+// ── Load data ──
+fetch('data.json')
+  .then(r => r.json())
+  .then(data => {
+    rawData = data;
+    document.getElementById('last-update').textContent = 'Dernière mise à jour : ' + data.last_update;
+
+    setKPI('euribor', 'euribor', false);
+    setKPI('inflation', 'inflation', true);
+    setKPI('bce', 'bce', false);
+    setKPI('oat', 'oat', false);
+
+    buildChart('euribor', 'euribor', COLORS.euribor, false);
+    buildChart('inflation', 'inflation', COLORS.inflation, true);
+    buildChart('bce', 'bce', COLORS.bce, false);
+    buildChart('oat', 'oat', COLORS.oat, false);
+  })
+  .catch(err => {
+    console.error('Erreur chargement data.json', err);
+    document.getElementById('last-update').textContent = 'Erreur : impossible de charger les données.';
+  });
+</script>
+</body>
+</html>
