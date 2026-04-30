@@ -2,7 +2,7 @@ import requests, json
 from datetime import datetime
 
 def get_fred(series):
-    API_KEY = "YOUR_FRED_API_KEY"
+    API_KEY = "9713ae41b71f0db52bfc7eb9035ef0ce"
     url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series}&api_key={API_KEY}&file_type=json"
     r = requests.get(url).json()["observations"]
     dates = [x["date"] for x in r][-365:]
