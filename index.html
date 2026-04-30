@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Dashboard CAT EPS</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body {font-family: Arial; margin:20px; background:#f4f6f9;}
+.card {background:white; padding:15px; margin:10px; border-radius:10px;}
+.grid {display:grid; grid-template-columns:1fr 1fr; gap:20px;}
+h1,h2 {color:#2c3e50;}
+</style>
+</head>
+
+<body>
+
+<h1>📊 Dashboard Anticipation CAT - EPS</h1>
+<p id="update"></p>
+
+<div class="grid">
+<div class="card"><h2>Euribor 3M</h2><canvas id="euribor"></canvas></div>
+<div class="card"><h2>Inflation</h2><canvas id="inflation"></canvas></div>
+<div class="card"><h2>BCE</h2><canvas id="bce"></canvas></div>
+<div class="card"><h2>OAT 10 ans</h2><canvas id="oat"></canvas></div>
+</div>
+
+<script>
+fetch("data.json")
+.then(r=>r.json())
+.then(data=>{
+
+document.getElementById("update").innerText =
+"Dernière mise à jour : " + data.last_update;
+
+// fonction graphique
+function chart(id, labels, values, label){
+new Chart(document.getElementById(id),{
+type:'line',
+data:{
+labels:labels,
+datasets:[{label:label,data:values,borderWidth:2}]
+}
+});
+}
+
+chart("euribor", data.euribor.dates, data.euribor.values, "Euribor 3M");
+chart("inflation", data.inflation.dates, data.inflation.values, "Inflation");
+chart("bce", data.bce.dates, data.bce.values, "BCE");
+chart("oat", data.oat.dates, data.oat.values, "OAT");
+
+});
+</script>
+
+</body>
+</html>
